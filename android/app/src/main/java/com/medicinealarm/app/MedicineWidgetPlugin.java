@@ -11,11 +11,17 @@ import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
 import com.getcapacitor.annotation.ActivityCallback;
+import com.getcapacitor.annotation.Permission;
+import com.getcapacitor.annotation.PermissionCallback;
+import com.getcapacitor.PermissionState;
+import android.os.Build;
+import android.provider.Settings;
+import android.net.Uri;
 import java.lang.ref.WeakReference;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 
-@CapacitorPlugin(name = "MedicineWidget")
+@CapacitorPlugin(name = "MedicineWidget", permissions = { @Permission(alias = "notifications", strings = { android.Manifest.permission.POST_NOTIFICATIONS }) })
 public class MedicineWidgetPlugin extends Plugin {
     private static WeakReference<MedicineWidgetPlugin> active = new WeakReference<>(null);
 
@@ -46,6 +52,7 @@ public class MedicineWidgetPlugin extends Plugin {
         try {
             WidgetStore.Snapshot saved = WidgetStore.save(getContext(), state, revision);
             MedicineWidgetProvider.updateAll(getContext());
+            MedicineReminders.refresh(getContext());
             call.resolve(payload(saved));
         } catch (Exception error) { call.reject("위젯 데이터를 저장하지 못했습니다.", error); }
     }
@@ -60,6 +67,37 @@ public class MedicineWidgetPlugin extends Plugin {
     }
 
     @PluginMethod public void getWidgetStatus(PluginCall call) { call.resolve(WidgetPinning.status(getContext())); }
+
+    @PluginMethod public void getNotificationStatus(PluginCall call) { call.resolve(MedicineReminders.status(getContext())); }
+
+    @PluginMethod public void requestNotificationPermission(PluginCall call) {
+        if (Build.VERSION.SDK_INT >= 33 && getPermissionState("notifications") != PermissionState.GRANTED) requestPermissionForAlias("notifications", call, "notificationPermissionResult");
+        else notificationPermissionResult(call);
+    }
+
+    @PermissionCallback private void notificationPermissionResult(PluginCall call) {
+        MedicineReminders.refresh(getContext());
+        call.resolve(MedicineReminders.status(getContext()));
+    }
+
+    @PluginMethod public void openNotificationSettings(PluginCall call) {
+        try {
+            getActivity().startActivity(new Intent(Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, getContext().getPackageName()).putExtra(Settings.EXTRA_CHANNEL_ID, MedicineReminders.CHANNEL));
+            call.resolve();
+        } catch (Exception error) { call.reject("알림 설정을 열지 못했습니다.", error); }
+    }
+
+    @PluginMethod public void requestExactAlarmPermission(PluginCall call) {
+        try {
+            if (Build.VERSION.SDK_INT >= 31) getActivity().startActivity(new Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM, Uri.parse("package:" + getContext().getPackageName())));
+            call.resolve();
+        } catch (Exception error) { call.reject("알람 설정을 열지 못했습니다.", error); }
+    }
+
+    @PluginMethod public void testNotification(PluginCall call) {
+        if (!MedicineReminders.allowed(getContext())) { call.reject("알림 권한을 허용해 주세요."); return; }
+        MedicineReminders.test(getContext()); call.resolve();
+    }
 
     @PluginMethod public void openHome(PluginCall call) {
         getActivity().runOnUiThread(() -> {
@@ -100,6 +138,7 @@ public class MedicineWidgetPlugin extends Plugin {
     }
 
     @Override protected void handleOnResume() {
+        MedicineReminders.refresh(getContext());
         publishState();
         publishWidgetStatus();
         MedicineWidgetProvider.updateAll(getContext());

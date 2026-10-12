@@ -79,3 +79,9 @@ export async function openAndroidHome() {
 export async function exportAndroidData(content, filename) {
   return Widget.exportData({ content, filename });
 }
+
+export const getNotificationStatus = () => Widget.getNotificationStatus();
+export const requestNotificationPermission = () => Widget.requestNotificationPermission();
+export const openNotificationSettings = () => Widget.openNotificationSettings();
+export const requestExactAlarmPermission = () => Widget.requestExactAlarmPermission();
+export const testNotification = () => Widget.testNotification();

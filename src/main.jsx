@@ -3,6 +3,9 @@ import { createRoot } from 'react-dom/client';
 import { Pill, CalendarDays, ClipboardList, History, Plus, Check, ChevronLeft, ChevronRight, Bell, BellOff, X, Pencil, Trash2, Clock3, Download, Upload, Home, PanelsTopLeft, Settings, CircleCheck, AlertCircle } from 'lucide-react';
 import { STORAGE_KEY, WEEKDAYS, emptyState, dateKey, shiftDate, scheduleFor, dueSlots, toggleRecord, parseState, cycleStatus, isDateKey } from './model.js';
 import { isAndroidApp, loadWidgetState, saveWidgetState, subscribeWidgetState, requestHomeWidget, exportAndroidData, getHomeWidgetStatus, subscribeHomeWidgetStatus, openAndroidHome } from './native-widget.js';
+import AdherenceCalendar from './AdherenceCalendar.jsx';
+import NotificationSettings from './NotificationSettings.jsx';
+import { getNotificationStatus, requestNotificationPermission } from './native-widget.js';
 import './style.css';
 
 const formatDate = date => new Intl.DateTimeFormat('ko-KR', { month: 'long', day: 'numeric', weekday: 'long' }).format(new Date(`${date}T12:00:00`));
@@ -63,6 +66,7 @@ function App({ initial }) {
   const [editing, setEditing] = useState(null);
   const [deleting, setDeleting] = useState(null);
   const [settings, setSettings] = useState(false);
+  const [nativeNotificationStatus, setNativeNotificationStatus] = useState(null);
   const [widgetStatus, setWidgetStatus] = useState(null);
   const [widgetAdding, setWidgetAdding] = useState(false);
   const pinRequest = useRef(null);
@@ -137,12 +141,21 @@ function App({ initial }) {
     return () => { active = false; clearInterval(timer); subscription?.remove(); document.removeEventListener('visibilitychange', refresh); };
   }, []);
   useEffect(() => {
+    if (!isAndroidApp) return;
+    let active = true;
+    const refresh = () => getNotificationStatus().then(status => { if (active) setNativeNotificationStatus(status); }).catch(() => {});
+    refresh();
+    const timer = setInterval(refresh, 5000);
+    document.addEventListener('visibilitychange', refresh);
+    return () => { active = false; clearInterval(timer); document.removeEventListener('visibilitychange', refresh); };
+  }, []);
+  useEffect(() => {
     function tick() {
       const current = new Date();
       setNow(previous => { if (dateKey(previous) !== dateKey(current)) setDate(d => d === dateKey(previous) ? dateKey(current) : d); return current; });
       if ('Notification' in window) setPermission(Notification.permission);
       const data = stateRef.current;
-      if (!data.notifications || !('Notification' in window) || Notification.permission !== 'granted') return;
+      if (isAndroidApp || !data.notifications || !('Notification' in window) || Notification.permission !== 'granted') return;
       const key = dateKey(current);
       const due = dueSlots(scheduleFor(data.medicines, data.records, key), key, current, [...alerting.current]);
       for (const slot of due) {
@@ -169,6 +182,15 @@ function App({ initial }) {
     setToast('약 정보를 저장했습니다.');
   }
   async function enableNotifications() {
+    if (isAndroidApp) {
+      try {
+        const result = await requestNotificationPermission();
+        setNativeNotificationStatus(result);
+        setState(s => ({ ...s, notifications: !!result.allowed }));
+        setToast(result.allowed ? '복용 알림을 켰습니다.' : 'Android 설정에서 알림 권한을 허용해 주세요.');
+      } catch { setToast('알림 권한을 요청하지 못했습니다. Android 설정을 확인해 주세요.'); }
+      return;
+    }
     if (!('Notification' in window) || !window.isSecureContext) { setToast('알림은 HTTPS 또는 로컬 환경의 지원 브라우저에서 사용할 수 있습니다.'); return; }
     try {
       const result = await Notification.requestPermission();
@@ -229,7 +251,7 @@ function App({ initial }) {
       <div className="sidebar-bottom"><div className="local-indicator"><span />이 브라우저에 저장됨</div><button className="nav-item" onClick={() => setSettings(true)}><Settings size={19} />설정</button></div>
     </aside>
     <main>
-      <header className="topbar"><span className="current-date">{formatDate(today)}</span><div className="topbar-actions">{isAndroidApp && <button className="icon-button" title="홈 화면 위젯 추가" aria-label="홈 화면 위젯 추가" disabled={!!initial.error || widgetAdding} onClick={addHomeWidget}><PanelsTopLeft size={19} /></button>}<button className="notification-button" onClick={() => setSettings(true)}>{state.notifications && permission === 'granted' ? <Bell size={17} /> : <BellOff size={17} />}<span>알림 {state.notifications && permission === 'granted' ? '켜짐' : '꺼짐'}</span></button></div></header>
+      <header className="topbar"><span className="current-date">{formatDate(today)}</span><div className="topbar-actions">{isAndroidApp && <button className="icon-button" title="홈 화면 위젯 추가" aria-label="홈 화면 위젯 추가" disabled={!!initial.error || widgetAdding} onClick={addHomeWidget}><PanelsTopLeft size={19} /></button>}<button className="notification-button" onClick={() => setSettings(true)}>{state.notifications && (isAndroidApp ? nativeNotificationStatus?.allowed : permission === 'granted') ? <Bell size={17} /> : <BellOff size={17} />}<span>알림 {state.notifications && (isAndroidApp ? nativeNotificationStatus?.allowed : permission === 'granted') ? '켜짐' : '꺼짐'}</span></button></div></header>
       <div className="content">
         {storageError && <div className="warning" role="alert"><AlertCircle size={20} /><span>{storageError}</span></div>}
         <div className="page-heading"><div><p className="eyebrow">나의 복약 관리</p><h1>{tab === 'today' ? '오늘의 복용' : tab === 'medicines' ? '내 약 목록' : '복용 기록'}</h1><p className="subtitle">{tab === 'today' ? '작은 기록으로 챙기는 매일의 건강' : tab === 'medicines' ? `등록한 약 ${state.medicines.length}개` : '차곡차곡 쌓인 나의 복용 내역'}</p></div><button className="primary-button" onClick={() => setEditing({})}><Plus size={18} />약 등록</button></div>
@@ -245,12 +267,12 @@ function App({ initial }) {
           <p className="bottom-note"><Pill size={15} />복용량과 복용 시간은 의사 또는 약사의 안내를 따라 주세요.</p>
         </>}
         {tab === 'medicines' && <section className="medicine-list">{!state.medicines.length ? <div className="empty-state"><span className="empty-icon"><ClipboardList size={32} /></span><h3>아직 등록한 약이 없어요</h3><button className="primary-button" onClick={() => setEditing({})}><Plus size={18} />약 등록</button></div> : state.medicines.map(m => <article className="medicine-row" key={m.id}><span className="medicine-symbol"><Pill size={24} /></span><div className="medicine-detail"><h2>{m.name}</h2><p>{m.dose}{m.note && ` · ${m.note}`}</p><div className="medicine-meta"><span><Clock3 size={14} />{m.times.join(', ')}</span><span>{m.cycle ? `${m.cycle.onDays}일 복용 · ${m.cycle.offDays}일 휴약` : m.days.length === 7 ? '매일' : [1, 2, 3, 4, 5, 6, 0].filter(d => m.days.includes(d)).map(d => WEEKDAYS[d]).join(' · ')}</span><span>{m.startDate} 시작</span></div></div><div className="row-actions"><button className="icon-button" title="수정" aria-label={`${m.name} 수정`} onClick={() => setEditing(m)}><Pencil size={18} /></button><button className="icon-button danger" title="삭제" aria-label={`${m.name} 삭제`} onClick={() => setDeleting(m)}><Trash2 size={18} /></button></div></article>)}</section>}
-        {tab === 'history' && <section><div className="section-header"><h2>복용 완료 내역 <span className="muted">{state.records.length}건</span></h2><button className="secondary-button" disabled={!state.records.length} onClick={exportRecords}><Download size={16} />기록 내보내기</button></div>{!state.records.length ? <div className="empty-state"><span className="empty-icon"><History size={32} /></span><h3>아직 복용 기록이 없어요</h3><p>복용을 완료하면 이곳에 기록이 남습니다.</p></div> : <div className="history-list">{[...state.records].sort((a, b) => b.date.localeCompare(a.date) || b.time.localeCompare(a.time)).map(record => <article className="history-row" key={record.id}><span className="history-check"><Check size={18} /></span><div className="history-info"><h3>{record.name}</h3><p>{record.dose} · {formatDate(record.date)} {record.time}</p></div><span className="muted actual-time">{new Intl.DateTimeFormat('ko-KR', { hour: '2-digit', minute: '2-digit' }).format(new Date(record.takenAt))} 기록</span></article>)}</div>}</section>}
+        {tab === 'history' && <AdherenceCalendar state={state} now={now} disabled={!!initial.error} onExport={exportRecords} onToggle={(slot, selected) => setState(s => ({ ...s, records: toggleRecord(s.records, slot, selected) }))} />}
       </div>
     </main>
     {editing && <MedicineForm medicine={editing.id ? editing : null} onSave={saveMedicine} onClose={() => setEditing(null)} />}
     {deleting && <Modal title="약 삭제" onClose={() => setDeleting(null)}><div className="modal-body"><p><strong>{deleting.name}</strong>을 목록에서 삭제할까요?</p><p className="muted">앞으로의 일정은 삭제되고, 이미 완료한 복용 기록은 남습니다.</p></div><div className="modal-footer"><button className="secondary-button" onClick={() => setDeleting(null)}>취소</button><button className="danger-button" onClick={() => { setState(s => ({ ...s, medicines: s.medicines.filter(m => m.id !== deleting.id) })); setDeleting(null); setToast('약을 삭제했습니다.'); }}><Trash2 size={17} />삭제</button></div></Modal>}
-    {settings && <Modal title="설정" onClose={() => setSettings(false)}><div className="modal-body">{isAndroidApp && <div className="widget-setting"><div className="setting-row"><div><h3>홈 화면 위젯</h3><p className="muted">{widgetRegistrationLabel}</p></div><button className="secondary-button" disabled={!!initial.error || widgetAdding} onClick={addHomeWidget}><PanelsTopLeft size={17} />{widgetAdding ? '확인 중' : '위젯 추가'}</button></div><button className="text-button" onClick={() => openAndroidHome().catch(() => setToast('홈 화면을 열지 못했습니다.'))}><Home size={16} />홈 화면 열기</button></div>}<div className="setting-row"><div><h3>브라우저 복용 알림</h3><p className="muted">{permission === 'denied' ? '브라우저 설정에서 알림 권한을 허용해 주세요.' : permission === 'unsupported' ? '이 브라우저는 알림을 지원하지 않습니다.' : '복용 시간에 알림을 받습니다.'}</p></div><button className={`toggle ${state.notifications && permission === 'granted' ? 'on' : ''}`} role="switch" aria-label="복용 알림" aria-checked={state.notifications && permission === 'granted'} onClick={() => state.notifications && permission === 'granted' ? setState(s => ({ ...s, notifications: false })) : enableNotifications()}><span /></button></div><p className="settings-notice">알림을 받으려면 이 페이지를 열어 두어야 합니다. 브라우저나 기기가 절전 상태이면 알림이 늦어질 수 있습니다.</p><div className="setting-row"><div><h3>복용 데이터</h3><p className="muted">{isAndroidApp ? '이 앱에 저장되며 홈 화면 위젯과 공유됩니다. 앱을 삭제하면 기록도 삭제됩니다.' : '이 기기의 브라우저에만 저장됩니다. 브라우저 데이터를 삭제하면 기록도 삭제됩니다.'}</p></div></div><div className="data-actions"><button className="secondary-button" onClick={exportRecords}><Download size={16} />내보내기</button><button className="secondary-button" onClick={() => importInput.current.click()}><Upload size={16} />가져오기</button></div></div></Modal>}
+    {settings && <Modal title="설정" onClose={() => setSettings(false)}><div className="modal-body">{isAndroidApp && <div className="widget-setting"><div className="setting-row"><div><h3>홈 화면 위젯</h3><p className="muted">{widgetRegistrationLabel}</p></div><button className="secondary-button" disabled={!!initial.error || widgetAdding} onClick={addHomeWidget}><PanelsTopLeft size={17} />{widgetAdding ? '확인 중' : '위젯 추가'}</button></div><button className="text-button" onClick={() => openAndroidHome().catch(() => setToast('홈 화면을 열지 못했습니다.'))}><Home size={16} />홈 화면 열기</button></div>}{isAndroidApp ? <NotificationSettings enabled={state.notifications} onEnable={enableNotifications} onDisable={() => setState(s => ({ ...s, notifications: false }))} onStatus={setNativeNotificationStatus} onMessage={setToast} /> : <><div className="setting-row"><div><h3>브라우저 복용 알림</h3><p className="muted">{permission === 'denied' ? '브라우저 설정에서 알림 권한을 허용해 주세요.' : permission === 'unsupported' ? '이 브라우저는 알림을 지원하지 않습니다.' : '복용 시간에 알림을 받습니다.'}</p></div><button className={`toggle ${state.notifications && (isAndroidApp ? nativeNotificationStatus?.allowed : permission === 'granted') ? 'on' : ''}`} role="switch" aria-label="복용 알림" aria-checked={state.notifications && (isAndroidApp ? nativeNotificationStatus?.allowed : permission === 'granted')} onClick={() => state.notifications && (isAndroidApp ? nativeNotificationStatus?.allowed : permission === 'granted') ? setState(s => ({ ...s, notifications: false })) : enableNotifications()}><span /></button></div><p className="settings-notice">알림을 받으려면 이 페이지를 열어 두어야 합니다. 브라우저나 기기가 절전 상태이면 알림이 늦어질 수 있습니다.</p></>}<div className="setting-row"><div><h3>복용 데이터</h3><p className="muted">{isAndroidApp ? '이 앱에 저장되며 홈 화면 위젯과 공유됩니다. 앱을 삭제하면 기록도 삭제됩니다.' : '이 기기의 브라우저에만 저장됩니다. 브라우저 데이터를 삭제하면 기록도 삭제됩니다.'}</p></div></div><div className="data-actions"><button className="secondary-button" onClick={exportRecords}><Download size={16} />내보내기</button><button className="secondary-button" onClick={() => importInput.current.click()}><Upload size={16} />가져오기</button></div></div></Modal>}
     <input ref={importInput} type="file" accept=".json,application/json" className="file-input" aria-label="복용 데이터 파일" onChange={importRecords} />
     {importing && <Modal title="데이터 가져오기" onClose={() => setImporting(null)}><div className="modal-body"><p>약 {importing.medicines.length}개와 복용 기록 {importing.records.length}건을 가져올까요?</p><p className="muted">현재 약 목록과 기록을 가져온 데이터로 교체합니다.</p></div><div className="modal-footer"><button className="secondary-button" onClick={() => setImporting(null)}>취소</button><button className="primary-button" onClick={() => { setState(importing); setImporting(null); alerting.current = new Set(); setToast('복용 데이터를 가져왔습니다.'); }}><Upload size={17} />가져오기</button></div></Modal>}
     {toast && <div role="status" className="toast"><CircleCheck size={18} /><span>{toast}</span><button className="icon-button" aria-label="알림 닫기" title="닫기" onClick={() => setToast('')}><X size={16} /></button></div>}

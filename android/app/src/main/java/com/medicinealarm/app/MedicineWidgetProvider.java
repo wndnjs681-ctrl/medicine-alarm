@@ -41,6 +41,7 @@ public class MedicineWidgetProvider extends AppWidgetProvider {
     }
 
     private static void publishAndUpdate(Context context) {
+        MedicineReminders.refresh(context);
         updateAll(context);
         MedicineWidgetPlugin.publishState();
     }
