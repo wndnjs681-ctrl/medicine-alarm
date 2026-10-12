@@ -1,0 +1,6 @@
+{
+  "appId": "com.medicinealarm.app",
+  "appName": "복약노트",
+  "webDir": "dist",
+  "server": { "androidScheme": "https" }
+}

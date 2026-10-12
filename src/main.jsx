@@ -1,14 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { Pill, CalendarDays, ClipboardList, History, Plus, Check, ChevronLeft, ChevronRight, Bell, BellOff, X, Pencil, Trash2, Clock3, Download, Settings, CircleCheck, AlertCircle } from 'lucide-react';
+import { Pill, CalendarDays, ClipboardList, History, Plus, Check, ChevronLeft, ChevronRight, Bell, BellOff, X, Pencil, Trash2, Clock3, Download, Upload, PanelsTopLeft, Settings, CircleCheck, AlertCircle } from 'lucide-react';
 import { STORAGE_KEY, WEEKDAYS, emptyState, dateKey, shiftDate, scheduleFor, dueSlots, toggleRecord, parseState } from './model.js';
+import { isAndroidApp, loadWidgetState, saveWidgetState, subscribeWidgetState, requestHomeWidget, exportAndroidData } from './native-widget.js';
 import './style.css';
 
 const formatDate = date => new Intl.DateTimeFormat('ko-KR', { month: 'long', day: 'numeric', weekday: 'long' }).format(new Date(`${date}T12:00:00`));
-const initial = (() => {
-  try { return { state: parseState(localStorage.getItem(STORAGE_KEY)), error: '' }; }
-  catch { return { state: emptyState(), error: '저장된 데이터를 읽지 못했습니다. 원본 데이터를 보존하기 위해 저장을 중단했습니다.' }; }
-})();
 
 function Modal({ title, onClose, children }) {
   const ref = useRef(null);
@@ -49,7 +46,7 @@ function MedicineForm({ medicine, onSave, onClose }) {
   </Modal>;
 }
 
-function App() {
+function App({ initial }) {
   const [state, setState] = useState(initial.state);
   const [storageError, setStorageError] = useState(initial.error);
   const [tab, setTab] = useState('today');
@@ -58,6 +55,8 @@ function App() {
   const [editing, setEditing] = useState(null);
   const [deleting, setDeleting] = useState(null);
   const [settings, setSettings] = useState(false);
+  const [importing, setImporting] = useState(null);
+  const importInput = useRef(null);
   const [toast, setToast] = useState('');
   const [permission, setPermission] = useState('Notification' in window ? Notification.permission : 'unsupported');
   const stateRef = useRef(state);
@@ -73,7 +72,19 @@ function App() {
     if (initial.error) return;
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); setStorageError(''); }
     catch { setStorageError('저장 공간에 접근할 수 없습니다. 지금 변경한 내용은 브라우저를 닫으면 사라질 수 있습니다.'); }
+    saveWidgetState(state).catch(error => {
+      if (error.state) { setState(error.state); setToast(error.message); }
+      else setStorageError('홈 화면 위젯과 기록을 동기화하지 못했습니다. 앱을 다시 열어 확인해 주세요.');
+    });
   }, [state]);
+  useEffect(() => {
+    let active = true;
+    let subscription;
+    subscribeWidgetState(next => { if (active) setState(next); }, () => { if (active) setStorageError('위젯의 복용 기록을 읽지 못했습니다.'); })
+      .then(handle => { if (active) subscription = handle; else handle.remove(); })
+      .catch(() => { if (active) setStorageError('위젯 기록 동기화를 시작하지 못했습니다.'); });
+    return () => { active = false; subscription?.remove(); };
+  }, []);
   useEffect(() => {
     function tick() {
       const current = new Date();
@@ -115,10 +126,39 @@ function App() {
       setToast(result === 'granted' ? '복용 알림을 켰습니다.' : '브라우저 설정에서 알림 권한을 허용해 주세요.');
     } catch { setToast('알림 권한을 요청하지 못했습니다. 브라우저 설정을 확인해 주세요.'); }
   }
-  function exportRecords() {
-    const blob = new Blob([JSON.stringify({ exportedAt: new Date().toISOString(), medicines: state.medicines, records: state.records }, null, 2)], { type: 'application/json' });
+  async function exportRecords() {
+    const content = JSON.stringify({ exportedAt: new Date().toISOString(), medicines: state.medicines, records: state.records }, null, 2);
+    const filename = `medicine-records-${today}.json`;
+    if (isAndroidApp) {
+      try { const result = await exportAndroidData(content, filename); setToast(result.cancelled ? '내보내기를 취소했습니다.' : '복용 데이터를 내보냈습니다.'); }
+      catch { setToast('복용 데이터 파일을 저장하지 못했습니다.'); }
+      return;
+    }
+    const blob = new Blob([content], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
-    const anchor = document.createElement('a'); anchor.href = url; anchor.download = `medicine-records-${today}.json`; anchor.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+    const anchor = document.createElement('a'); anchor.href = url; anchor.download = filename; anchor.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+  async function importRecords(event) {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+    try {
+      if (file.size > 2 * 1024 * 1024) throw new Error('파일 크기가 너무 큽니다.');
+      const data = JSON.parse(await file.text());
+      const next = parseState(JSON.stringify({ ...emptyState(), medicines: data.medicines, records: data.records }));
+      setSettings(false);
+      setImporting(next);
+    } catch { setToast('복약노트에서 내보낸 JSON 파일인지 확인해 주세요. 최대 크기는 2MB입니다.'); }
+  }
+  async function addHomeWidget() {
+    try {
+      await saveWidgetState(state);
+      const result = await requestHomeWidget();
+      setToast(result.requested ? '홈 화면에서 위젯 추가를 확인해 주세요.' : '홈 화면을 길게 누른 뒤 위젯 목록에서 복약노트를 선택해 주세요.');
+    } catch (error) {
+      if (error.state) setState(error.state);
+      setToast(error.state ? error.message : '위젯을 추가하지 못했습니다. 홈 화면의 위젯 목록을 확인해 주세요.');
+    }
   }
 
   return <div className="app-shell">
@@ -128,7 +168,7 @@ function App() {
       <div className="sidebar-bottom"><div className="local-indicator"><span />이 브라우저에 저장됨</div><button className="nav-item" onClick={() => setSettings(true)}><Settings size={19} />설정</button></div>
     </aside>
     <main>
-      <header className="topbar"><span className="current-date">{formatDate(today)}</span><button className="notification-button" onClick={() => setSettings(true)}>{state.notifications && permission === 'granted' ? <Bell size={17} /> : <BellOff size={17} />}<span>알림 {state.notifications && permission === 'granted' ? '켜짐' : '꺼짐'}</span></button></header>
+      <header className="topbar"><span className="current-date">{formatDate(today)}</span><div className="topbar-actions">{isAndroidApp && <button className="icon-button" title="홈 화면 위젯 추가" aria-label="홈 화면 위젯 추가" disabled={!!initial.error} onClick={addHomeWidget}><PanelsTopLeft size={19} /></button>}<button className="notification-button" onClick={() => setSettings(true)}>{state.notifications && permission === 'granted' ? <Bell size={17} /> : <BellOff size={17} />}<span>알림 {state.notifications && permission === 'granted' ? '켜짐' : '꺼짐'}</span></button></div></header>
       <div className="content">
         {storageError && <div className="warning" role="alert"><AlertCircle size={20} /><span>{storageError}</span></div>}
         <div className="page-heading"><div><p className="eyebrow">나의 복약 관리</p><h1>{tab === 'today' ? '오늘의 복용' : tab === 'medicines' ? '내 약 목록' : '복용 기록'}</h1><p className="subtitle">{tab === 'today' ? '작은 기록으로 챙기는 매일의 건강' : tab === 'medicines' ? `등록한 약 ${state.medicines.length}개` : '차곡차곡 쌓인 나의 복용 내역'}</p></div><button className="primary-button" onClick={() => setEditing({})}><Plus size={18} />약 등록</button></div>
@@ -148,9 +188,22 @@ function App() {
     </main>
     {editing && <MedicineForm medicine={editing.id ? editing : null} onSave={saveMedicine} onClose={() => setEditing(null)} />}
     {deleting && <Modal title="약 삭제" onClose={() => setDeleting(null)}><div className="modal-body"><p><strong>{deleting.name}</strong>을 목록에서 삭제할까요?</p><p className="muted">앞으로의 일정은 삭제되고, 이미 완료한 복용 기록은 남습니다.</p></div><div className="modal-footer"><button className="secondary-button" onClick={() => setDeleting(null)}>취소</button><button className="danger-button" onClick={() => { setState(s => ({ ...s, medicines: s.medicines.filter(m => m.id !== deleting.id) })); setDeleting(null); setToast('약을 삭제했습니다.'); }}><Trash2 size={17} />삭제</button></div></Modal>}
-    {settings && <Modal title="설정" onClose={() => setSettings(false)}><div className="modal-body"><div className="setting-row"><div><h3>브라우저 복용 알림</h3><p className="muted">{permission === 'denied' ? '브라우저 설정에서 알림 권한을 허용해 주세요.' : permission === 'unsupported' ? '이 브라우저는 알림을 지원하지 않습니다.' : '복용 시간에 알림을 받습니다.'}</p></div><button className={`toggle ${state.notifications && permission === 'granted' ? 'on' : ''}`} role="switch" aria-label="복용 알림" aria-checked={state.notifications && permission === 'granted'} onClick={() => state.notifications && permission === 'granted' ? setState(s => ({ ...s, notifications: false })) : enableNotifications()}><span /></button></div><p className="settings-notice">알림을 받으려면 이 페이지를 열어 두어야 합니다. 브라우저나 기기가 절전 상태이면 알림이 늦어질 수 있습니다.</p><div className="setting-row"><div><h3>복용 데이터</h3><p className="muted">이 기기의 브라우저에만 저장됩니다. 브라우저 데이터를 삭제하면 기록도 삭제됩니다.</p></div></div><button className="secondary-button" onClick={exportRecords}><Download size={16} />데이터 내보내기</button></div></Modal>}
+    {settings && <Modal title="설정" onClose={() => setSettings(false)}><div className="modal-body">{isAndroidApp && <div className="setting-row widget-setting"><div><h3>홈 화면 위젯</h3></div><button className="secondary-button" disabled={!!initial.error} onClick={addHomeWidget}><PanelsTopLeft size={17} />위젯 추가</button></div>}<div className="setting-row"><div><h3>브라우저 복용 알림</h3><p className="muted">{permission === 'denied' ? '브라우저 설정에서 알림 권한을 허용해 주세요.' : permission === 'unsupported' ? '이 브라우저는 알림을 지원하지 않습니다.' : '복용 시간에 알림을 받습니다.'}</p></div><button className={`toggle ${state.notifications && permission === 'granted' ? 'on' : ''}`} role="switch" aria-label="복용 알림" aria-checked={state.notifications && permission === 'granted'} onClick={() => state.notifications && permission === 'granted' ? setState(s => ({ ...s, notifications: false })) : enableNotifications()}><span /></button></div><p className="settings-notice">알림을 받으려면 이 페이지를 열어 두어야 합니다. 브라우저나 기기가 절전 상태이면 알림이 늦어질 수 있습니다.</p><div className="setting-row"><div><h3>복용 데이터</h3><p className="muted">{isAndroidApp ? '이 앱에 저장되며 홈 화면 위젯과 공유됩니다. 앱을 삭제하면 기록도 삭제됩니다.' : '이 기기의 브라우저에만 저장됩니다. 브라우저 데이터를 삭제하면 기록도 삭제됩니다.'}</p></div></div><div className="data-actions"><button className="secondary-button" onClick={exportRecords}><Download size={16} />내보내기</button><button className="secondary-button" onClick={() => importInput.current.click()}><Upload size={16} />가져오기</button></div></div></Modal>}
+    <input ref={importInput} type="file" accept=".json,application/json" className="file-input" aria-label="복용 데이터 파일" onChange={importRecords} />
+    {importing && <Modal title="데이터 가져오기" onClose={() => setImporting(null)}><div className="modal-body"><p>약 {importing.medicines.length}개와 복용 기록 {importing.records.length}건을 가져올까요?</p><p className="muted">현재 약 목록과 기록을 가져온 데이터로 교체합니다.</p></div><div className="modal-footer"><button className="secondary-button" onClick={() => setImporting(null)}>취소</button><button className="primary-button" onClick={() => { setState(importing); setImporting(null); alerting.current = new Set(); setToast('복용 데이터를 가져왔습니다.'); }}><Upload size={17} />가져오기</button></div></Modal>}
     {toast && <div role="status" className="toast"><CircleCheck size={18} /><span>{toast}</span><button className="icon-button" aria-label="알림 닫기" title="닫기" onClick={() => setToast('')}><X size={16} /></button></div>}
   </div>;
 }
 
-createRoot(document.getElementById('root')).render(<App />);
+async function bootstrap() {
+  let initial;
+  try {
+    const native = await loadWidgetState();
+    initial = { state: parseState(native ?? localStorage.getItem(STORAGE_KEY)), error: '' };
+  } catch {
+    initial = { state: emptyState(), error: '저장된 데이터를 읽지 못했습니다. 원본 데이터를 보존하기 위해 저장을 중단했습니다.' };
+  }
+  createRoot(document.getElementById('root')).render(<App initial={initial} />);
+}
+
+bootstrap();

@@ -102,3 +102,23 @@ test('long medicine names fit the desktop and mobile layout', async ({ page }, t
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   await page.screenshot({ path: `test-results/${testInfo.project.name}-medicines.png`, fullPage: true });
 });
+
+test('import restores exported medicine data after confirmation and rejects corrupt files', async ({ page }) => {
+  await page.goto('/');
+  await addMedicine(page);
+  await page.getByRole('button', { name: '08:00 비타민 D 복용 완료' }).click();
+  const exported = await page.evaluate(() => {
+    const state = JSON.parse(localStorage.getItem('medicine-alarm:v1'));
+    return JSON.stringify({ exportedAt: new Date().toISOString(), medicines: state.medicines, records: state.records });
+  });
+  await page.getByRole('button', { name: '알림 꺼짐' }).click();
+  await page.getByLabel('복용 데이터 파일').setInputFiles({ name: 'medicine.json', mimeType: 'application/json', buffer: Buffer.from(exported) });
+  await expect(page.getByRole('dialog', { name: '데이터 가져오기' })).toContainText('약 1개와 복용 기록 1건');
+  await page.getByRole('dialog', { name: '데이터 가져오기' }).getByRole('button', { name: '가져오기', exact: true }).click();
+  await expect(page.getByRole('button', { name: '08:00 비타민 D 복용 취소' })).toHaveAttribute('aria-pressed', 'true');
+  await page.getByRole('button', { name: '알림 꺼짐' }).click();
+  await page.getByLabel('복용 데이터 파일').setInputFiles({ name: 'broken.json', mimeType: 'application/json', buffer: Buffer.from('{broken') });
+  await expect(page.getByRole('status')).toContainText('JSON 파일인지 확인');
+  await page.getByRole('button', { name: '닫기', exact: true }).click();
+  await expect(page.getByRole('button', { name: '08:00 비타민 D 복용 취소' })).toBeVisible();
+});

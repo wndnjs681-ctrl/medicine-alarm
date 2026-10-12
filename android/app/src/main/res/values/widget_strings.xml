@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="widget_description">오늘의 복용 일정과 빠른 복용 완료</string>
+    <string name="widget_brand">복약노트</string>
+    <string name="widget_date_preview">10월 12일 (월)</string>
+    <string name="widget_progress_preview">1 / 3회 완료</string>
+    <string name="widget_time_preview">12:00 · 예정</string>
+    <string name="widget_name_preview">약 이름 · 용량</string>
+    <string name="widget_complete">복용 완료</string>
+    <string name="widget_open">앱 열기</string>
+</resources>

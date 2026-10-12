@@ -29,6 +29,7 @@ main { margin-left: 232px; min-width: 0; flex: 1; }
 .topbar { display: flex; justify-content: space-between; align-items: center; padding: 19px 44px; min-height: 74px; border-bottom: 1px solid #e4e9e6; background: #fff; }
 .current-date { font-size: 13px; color: #69756f; }
 .notification-button { border: none; background: transparent; color: #67726c; font-size: 12px; padding: 7px 0 7px 10px; }
+.topbar-actions { display: flex; align-items: center; gap: 8px; }
 .content { max-width: 1050px; margin: 0 auto; padding: 39px 44px 34px; }
 .page-heading { display: flex; align-items: center; justify-content: space-between; gap: 20px; margin-bottom: 30px; }
 .eyebrow { font-size: 11px; color: #17735c; font-weight: 600; margin-bottom: 4px; }
@@ -116,6 +117,9 @@ legend { font-size: 13px; font-weight: 500; padding: 0; margin-bottom: 10px; }
 .form-error { color: #b33e47; font-size: 12px; margin-bottom: 18px; }
 .setting-row { display: flex; align-items: center; gap: 18px; justify-content: space-between; margin-bottom: 18px; }
 .setting-row p { margin-top: 5px; }
+.widget-setting { border-bottom: 1px solid #e7ece8; padding-bottom: 18px; }
+.data-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.file-input { display: none; }
 .toggle { height: 25px; width: 44px; padding: 3px; flex-shrink: 0; border-radius: 20px; border: 0; background: #bec8c0; justify-content: flex-start; }
 .toggle span { width: 19px; height: 19px; border-radius: 50%; background: white; }
 .toggle.on { background: #17735c; justify-content: flex-end; }
