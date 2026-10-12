@@ -185,4 +185,9 @@ legend { font-size: 13px; font-weight: 500; padding: 0; margin-bottom: 10px; }
   .medicine-form { padding: 20px 20px 0; }
   .medicine-form .modal-footer { margin-left: -20px; margin-right: -20px; }
 }
+@media (max-width: 360px) {
+  .nav-item { font-size: 11px; gap: 4px; padding-left: 2px; padding-right: 2px; }
+  .nav-item svg { width: 16px; }
+  .nav-item > span { white-space: nowrap; }
+}
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
