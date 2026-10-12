@@ -141,4 +141,51 @@ public class MedicineWidgetTest {
         output.getParentFile().mkdirs();
         try (FileOutputStream stream = new FileOutputStream(output)) { assertTrue(bitmap.compress(Bitmap.CompressFormat.PNG, 100, stream)); }
     }
+
+    private String cyclicState(LocalDate start) throws Exception {
+        JSONObject data = new JSONObject(state);
+        data.getJSONArray("medicines").getJSONObject(0).put("startDate", start.toString()).put("cycle", new JSONObject("{\"onDays\":21,\"offDays\":7}"));
+        return data.toString();
+    }
+
+    @Test public void cyclesRepeatEvery28CalendarDaysAndSuppressRestDayActions() throws Exception {
+        String raw = cyclicState(date);
+        WidgetStore.save(context, raw, 0);
+        for (int offset = 0; offset < 84; offset++) {
+            LocalDate selected = date.plusDays(offset);
+            assertEquals(selected.toString(), offset % 28 < 21 ? 2 : 0, WidgetStore.schedule(raw, selected).size());
+        }
+        LocalDate rest = date.plusDays(21);
+        assertFalse(WidgetStore.complete(context, "vitamin:" + rest + ":08:00", rest, Instant.now()));
+        assertEquals(0, new JSONObject(WidgetStore.read(context).state).getJSONArray("records").length());
+        WidgetStore.RestPeriod phase = WidgetStore.restPeriods(raw, rest).get(0);
+        assertEquals(1, phase.status.day);
+        assertEquals(date.plusDays(28), phase.status.resumeDate);
+        View view = MedicineWidgetProvider.createViews(context, 1, rest, LocalTime.NOON).apply(context, new FrameLayout(context));
+        assertEquals("휴약기", ((TextView) view.findViewById(R.id.widget_time)).getText().toString());
+        assertEquals("휴약 1일째 / 7일", ((TextView) view.findViewById(R.id.widget_progress_text)).getText().toString());
+        assertTrue(((TextView) view.findViewById(R.id.widget_name)).getText().toString().contains("11월 9일 복용 재개"));
+        assertEquals(View.GONE, view.findViewById(R.id.widget_complete).getVisibility());
+    }
+
+    @Test public void leapYearCycleAndZeroRestMatchTheAppCalendar() throws Exception {
+        String raw = cyclicState(LocalDate.of(2024, 2, 15));
+        JSONObject medicine = new JSONObject(raw).getJSONArray("medicines").getJSONObject(0);
+        WidgetStore.CyclePhase phase = WidgetStore.cyclePhase(medicine, LocalDate.of(2024, 3, 10));
+        assertEquals("rest", phase.phase);
+        assertEquals(4, phase.day);
+        assertEquals(LocalDate.of(2024, 3, 14), phase.resumeDate);
+        assertTrue(WidgetStore.schedule(raw, LocalDate.of(2024, 2, 14)).isEmpty());
+        JSONObject data = new JSONObject(raw);
+        data.getJSONArray("medicines").getJSONObject(0).getJSONObject("cycle").put("offDays", 0);
+        assertEquals(2, WidgetStore.schedule(data.toString(), LocalDate.of(2024, 3, 7)).size());
+    }
+
+    @Test public void invalidCycleDoesNotReplaceExistingMedicineState() throws Exception {
+        WidgetStore.save(context, state, 0);
+        JSONObject broken = new JSONObject(cyclicState(date));
+        broken.getJSONArray("medicines").getJSONObject(0).getJSONObject("cycle").put("onDays", 0);
+        assertThrows(Exception.class, () -> WidgetStore.save(context, broken.toString(), 1));
+        assertEquals(state, WidgetStore.read(context).state);
+    }
 }

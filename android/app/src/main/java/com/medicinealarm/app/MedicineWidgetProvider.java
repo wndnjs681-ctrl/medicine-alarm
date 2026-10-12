@@ -21,7 +21,12 @@ public class MedicineWidgetProvider extends AppWidgetProvider {
 
     @Override public void onUpdate(Context context, AppWidgetManager manager, int[] ids) {
         for (int id : ids) manager.updateAppWidget(id, createViews(context, id, LocalDate.now(), LocalTime.now()));
+        MedicineWidgetPlugin.publishWidgetStatus();
     }
+
+    @Override public void onDeleted(Context context, int[] appWidgetIds) { MedicineWidgetPlugin.publishWidgetStatus(); }
+
+    @Override public void onDisabled(Context context) { MedicineWidgetPlugin.publishWidgetStatus(); }
 
     @Override public void onReceive(Context context, Intent intent) {
         super.onReceive(context, intent);
@@ -65,8 +70,17 @@ public class MedicineWidgetProvider extends AppWidgetProvider {
             views.setTextViewText(R.id.widget_progress_text, done + " / " + slots.size() + "회 완료");
             views.setProgressBar(R.id.widget_progress, Math.max(1, slots.size()), done, false);
             if (next == null) {
-                views.setTextViewText(R.id.widget_time, slots.isEmpty() ? "오늘 일정 없음" : "오늘 복용 완료");
-                views.setTextViewText(R.id.widget_name, slots.isEmpty() ? "앱에서 약과 복용 요일을 확인해 주세요." : "모든 복용 기록을 남겼어요.");
+                List<WidgetStore.RestPeriod> rest = WidgetStore.restPeriods(WidgetStore.read(context).state, date);
+                if (slots.isEmpty() && !rest.isEmpty()) {
+                    WidgetStore.RestPeriod resting = rest.get(0);
+                    views.setTextViewText(R.id.widget_progress_text, "휴약 " + resting.status.day + "일째 / " + resting.status.length + "일");
+                    views.setTextViewText(R.id.widget_time, "휴약기");
+                    String resume = resting.status.resumeDate.format(DateTimeFormatter.ofPattern("M월 d일", Locale.KOREAN));
+                    views.setTextViewText(R.id.widget_name, resting.name + " · " + resume + " 복용 재개");
+                } else {
+                    views.setTextViewText(R.id.widget_time, slots.isEmpty() ? "오늘 일정 없음" : "오늘 복용 완료");
+                    views.setTextViewText(R.id.widget_name, slots.isEmpty() ? "앱에서 약과 복용 일정을 확인해 주세요." : "모든 복용 기록을 남겼어요.");
+                }
             } else {
                 views.setTextViewText(R.id.widget_time, next.time + (LocalTime.parse(next.time).isAfter(now) ? " · 예정" : " · 미복용"));
                 views.setTextViewText(R.id.widget_name, next.name + " · " + next.dose);

@@ -63,6 +63,19 @@ export async function requestHomeWidget() {
   return Widget.requestPin();
 }
 
+export async function getHomeWidgetStatus() {
+  return Widget.getWidgetStatus();
+}
+
+export async function subscribeHomeWidgetStatus(onStatus) {
+  if (!isAndroidApp) return { remove() {} };
+  return Widget.addListener('widgetStatusChanged', onStatus);
+}
+
+export async function openAndroidHome() {
+  return Widget.openHome();
+}
+
 export async function exportAndroidData(content, filename) {
   return Widget.exportData({ content, filename });
 }

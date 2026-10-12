@@ -8,6 +8,7 @@ import org.json.JSONObject;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalTime;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -33,6 +34,21 @@ public final class WidgetStore {
             this.date = date; this.time = time; this.completed = completed;
             key = medicineId + ":" + date + ":" + time;
         }
+    }
+
+    public static final class CyclePhase {
+        public final String phase;
+        public final int day, length;
+        public final LocalDate resumeDate;
+        CyclePhase(String phase, int day, int length, LocalDate resumeDate) {
+            this.phase = phase; this.day = day; this.length = length; this.resumeDate = resumeDate;
+        }
+    }
+
+    public static final class RestPeriod {
+        public final String name;
+        public final CyclePhase status;
+        RestPeriod(String name, CyclePhase status) { this.name = name; this.status = status; }
     }
 
     private static SharedPreferences preferences(Context context) {
@@ -72,7 +88,46 @@ public final class WidgetStore {
                 int day = days.getInt(j);
                 if (day < 0 || day > 6) throw new JSONException("복용 요일이 올바르지 않습니다.");
             }
+            if (medicine.has("cycle") && !medicine.isNull("cycle")) {
+                JSONObject cycle = medicine.getJSONObject("cycle");
+                cycleLength(cycle, "onDays", 1);
+                cycleLength(cycle, "offDays", 0);
+            }
         }
+    }
+
+    private static int cycleLength(JSONObject cycle, String key, int minimum) throws JSONException {
+        Object value = cycle.get(key);
+        if (!(value instanceof Number)) throw new JSONException("주기 일수가 올바르지 않습니다.");
+        Number number = (Number) value;
+        double days = number.doubleValue();
+        if (!Double.isFinite(days) || days < minimum || days > 365 || days != number.intValue()) throw new JSONException("주기 일수가 올바르지 않습니다.");
+        return number.intValue();
+    }
+
+    public static CyclePhase cyclePhase(JSONObject medicine, LocalDate date) throws JSONException {
+        if (!medicine.has("cycle") || medicine.isNull("cycle")) return null;
+        JSONObject cycle = medicine.getJSONObject("cycle");
+        int onDays = cycleLength(cycle, "onDays", 1), offDays = cycleLength(cycle, "offDays", 0);
+        LocalDate start = LocalDate.parse(medicine.getString("startDate"));
+        long elapsed = ChronoUnit.DAYS.between(start, date);
+        if (elapsed < 0) return new CyclePhase("pending", 0, onDays, start);
+        int position = (int) (elapsed % (onDays + offDays));
+        return position < onDays
+            ? new CyclePhase("taking", position + 1, onDays, null)
+            : new CyclePhase("rest", position - onDays + 1, offDays, date.plusDays(onDays + offDays - position));
+    }
+
+    public static List<RestPeriod> restPeriods(String raw, LocalDate date) throws JSONException {
+        List<RestPeriod> result = new ArrayList<>();
+        if (raw == null) return result;
+        JSONArray medicines = new JSONObject(raw).getJSONArray("medicines");
+        for (int i = 0; i < medicines.length(); i++) {
+            JSONObject medicine = medicines.getJSONObject(i);
+            CyclePhase status = cyclePhase(medicine, date);
+            if (status != null && "rest".equals(status.phase)) result.add(new RestPeriod(medicine.getString("name"), status));
+        }
+        return result;
     }
 
     public static List<Dose> schedule(String raw, LocalDate date) throws JSONException {
@@ -88,7 +143,9 @@ public final class WidgetStore {
             if (LocalDate.parse(medicine.getString("startDate")).isAfter(date)) continue;
             JSONArray days = medicine.getJSONArray("days");
             boolean scheduled = false;
-            for (int j = 0; j < days.length(); j++) if (days.getInt(j) == weekday) scheduled = true;
+            CyclePhase cycle = cyclePhase(medicine, date);
+            if (cycle != null) scheduled = "taking".equals(cycle.phase);
+            else for (int j = 0; j < days.length(); j++) if (days.getInt(j) == weekday) scheduled = true;
             if (!scheduled) continue;
             JSONArray times = medicine.getJSONArray("times");
             for (int j = 0; j < times.length(); j++) {

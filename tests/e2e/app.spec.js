@@ -122,3 +122,85 @@ test('import restores exported medicine data after confirmation and rejects corr
   await page.getByRole('button', { name: '닫기', exact: true }).click();
   await expect(page.getByRole('button', { name: '08:00 비타민 D 복용 취소' })).toBeVisible();
 });
+
+test('21-day medicine cycles show rest days, resume correctly and persist editable settings', async ({ page }, testInfo) => {
+  await page.clock.install({ time: new Date('2026-10-12T12:00:00') });
+  await page.goto('/');
+  await page.getByRole('button', { name: '약 등록', exact: true }).first().click();
+  await page.getByLabel('약 이름', { exact: true }).fill('주기 약');
+  await page.getByLabel('한 번에 복용할 용량').fill('1정');
+  await page.getByRole('button', { name: '복용 · 휴약 반복', exact: true }).click();
+  await page.getByLabel('복용 기간 (일)').fill('21');
+  await page.getByLabel('휴약 기간 (일)').fill('7');
+  await page.getByLabel('주기 시작일').fill('2026-10-12');
+  await page.screenshot({ path: `test-results/${testInfo.project.name}-cycle-form.png`, fullPage: true });
+  await page.getByRole('button', { name: '저장', exact: true }).click();
+  await expect(page.getByLabel('반복 복용 현황')).toContainText('복용 1일째 / 21일');
+  await page.getByRole('button', { name: '08:00 주기 약 복용 완료' }).click();
+  await page.getByLabel('일정 날짜').fill('2026-11-02');
+  await expect(page.getByRole('heading', { name: '휴약 기간입니다' })).toBeVisible();
+  await expect(page.getByLabel('반복 복용 현황')).toContainText('휴약 1일째 / 7일');
+  await expect(page.getByLabel('반복 복용 현황')).toContainText('11월 9일 월요일 복용 재개');
+  await expect(page.getByRole('button', { name: '08:00 주기 약 복용 완료' })).toHaveCount(0);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await page.screenshot({ path: `test-results/${testInfo.project.name}-cycle-rest.png`, fullPage: true });
+  await page.getByLabel('일정 날짜').fill('2026-11-08');
+  await expect(page.getByLabel('반복 복용 현황')).toContainText('휴약 7일째 / 7일');
+  await page.getByLabel('일정 날짜').fill('2026-11-09');
+  await expect(page.getByLabel('반복 복용 현황')).toContainText('복용 1일째 / 21일');
+  await expect(page.getByRole('heading', { name: '주기 약', exact: true })).toBeVisible();
+  await page.reload();
+  await page.getByRole('button', { name: '내 약 목록', exact: true }).click();
+  await expect(page.getByText('21일 복용 · 7일 휴약', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: '주기 약 수정' }).click();
+  await expect(page.getByLabel('복용 기간 (일)')).toHaveValue('21');
+  await expect(page.getByLabel('휴약 기간 (일)')).toHaveValue('7');
+  await expect(page.getByLabel('주기 시작일')).toHaveValue('2026-10-12');
+  await page.getByLabel('복용 기간 (일)').fill('2');
+  await page.getByLabel('휴약 기간 (일)').fill('1');
+  await page.getByRole('button', { name: '저장', exact: true }).click();
+  await page.getByRole('button', { name: '복용 기록', exact: true }).click();
+  await expect(page.getByRole('heading', { name: '주기 약', exact: true })).toBeVisible();
+});
+
+test('Android widget request waits for registration and handles a missing launcher placement', async ({ page }) => {
+  await page.addInitScript(() => {
+    window.androidBridge = {};
+    window.widgetFixture = { count: 0, listeners: new Map(), revision: 0, state: null };
+    window.Capacitor = {
+      PluginHeaders: [{ name: 'MedicineWidget', methods: ['getState', 'saveState', 'getWidgetStatus', 'requestPin', 'openHome', 'removeListener'].map(name => ({ name, rtype: 'promise' })).concat([{ name: 'addListener', rtype: 'callback' }]) }],
+      nativePromise: async (_, method, options) => {
+        const fixture = window.widgetFixture;
+        if (method === 'getState') return { state: fixture.state, revision: fixture.revision, accepted: true };
+        if (method === 'saveState') { fixture.state = options.state; fixture.revision++; return { state: fixture.state, revision: fixture.revision, accepted: true }; }
+        if (method === 'getWidgetStatus') { if (fixture.failStatus) throw new Error('Status unavailable'); return { supported: true, widgetCount: fixture.count }; }
+        if (method === 'requestPin') return { supported: true, requested: true, widgetCount: fixture.count };
+        return {};
+      },
+      nativeCallback: (_, method, options, callback) => { if (method === 'addListener') window.widgetFixture.listeners.set(options.eventName, callback); return options.eventName; }
+    };
+  });
+  await page.clock.install();
+  await page.goto('/');
+  await page.getByRole('button', { name: '홈 화면 위젯 추가' }).click();
+  await expect(page.getByRole('status')).toContainText('위젯 추가를 확인');
+  await expect(page.getByRole('button', { name: '홈 화면 위젯 추가' })).toBeDisabled();
+  await page.clock.fastForward(21000);
+  await expect(page.getByRole('status')).toContainText('위젯 등록이 확인되지 않았습니다');
+  await expect(page.getByRole('button', { name: '홈 화면 위젯 추가' })).toBeEnabled();
+  await page.getByRole('button', { name: '홈 화면 위젯 추가' }).click();
+  await expect(page.getByRole('status')).toContainText('위젯 추가를 확인');
+  await page.evaluate(() => { window.widgetFixture.count = 1; window.widgetFixture.listeners.get('widgetStatusChanged')({ supported: true, widgetCount: 1 }); });
+  await expect(page.getByRole('status')).toContainText('홈 화면에 위젯을 추가했습니다.');
+  await page.getByRole('button', { name: '알림 꺼짐' }).click();
+  await expect(page.getByText('등록된 위젯 1개')).toBeVisible();
+  await page.getByRole('button', { name: '닫기', exact: true }).click();
+  await page.evaluate(() => { window.widgetFixture.failStatus = true; });
+  await page.getByRole('button', { name: '홈 화면 위젯 추가' }).click();
+  await expect(page.getByRole('status')).toContainText('위젯 추가를 확인');
+  await page.clock.fastForward(21000);
+  await expect(page.getByRole('status')).toContainText('위젯 상태를 확인하지 못했습니다');
+  await expect(page.getByRole('button', { name: '홈 화면 위젯 추가' })).toBeEnabled();
+  await page.getByRole('button', { name: '알림 꺼짐' }).click();
+  await expect(page.getByText('등록 상태 확인 불가')).toBeVisible();
+});

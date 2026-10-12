@@ -27,6 +27,8 @@
 
         </activity>
 
+        <receiver android:name=".WidgetPinCallbackReceiver" android:exported="false" />
+
         <receiver
             android:name=".MedicineWidgetProvider"
             android:exported="false"

@@ -35,8 +35,14 @@ public class MedicineWidgetPlugin extends Plugin {
 
     @PluginMethod public void saveState(PluginCall call) {
         String state = call.getString("state");
-        Long revision = call.getLong("expectedRevision");
-        if (state == null || revision == null) { call.reject("저장할 데이터와 버전이 필요합니다."); return; }
+        Object revisionValue = call.getData().opt("expectedRevision");
+        if (state == null || !(revisionValue instanceof Number)) { call.reject("저장할 데이터와 버전이 필요합니다."); return; }
+        Number number = (Number) revisionValue;
+        double value = number.doubleValue();
+        if (!Double.isFinite(value) || value < 0 || value > 9007199254740991L || value != number.longValue()) {
+            call.reject("데이터 버전이 올바르지 않습니다."); return;
+        }
+        long revision = number.longValue();
         try {
             WidgetStore.Snapshot saved = WidgetStore.save(getContext(), state, revision);
             MedicineWidgetProvider.updateAll(getContext());
@@ -45,12 +51,28 @@ public class MedicineWidgetPlugin extends Plugin {
     }
 
     @PluginMethod public void requestPin(PluginCall call) {
-        AppWidgetManager manager = AppWidgetManager.getInstance(getContext());
-        boolean supported = manager.isRequestPinAppWidgetSupported();
-        JSObject result = new JSObject();
-        result.put("supported", supported);
-        result.put("requested", supported && manager.requestPinAppWidget(new ComponentName(getContext(), MedicineWidgetProvider.class), null, null));
-        call.resolve(result);
+        getActivity().runOnUiThread(() -> {
+            try {
+                JSObject result = WidgetPinning.request(getContext());
+                call.resolve(result);
+            } catch (Exception error) { call.reject("홈 화면 위젯 추가를 요청하지 못했습니다.", error); }
+        });
+    }
+
+    @PluginMethod public void getWidgetStatus(PluginCall call) { call.resolve(WidgetPinning.status(getContext())); }
+
+    @PluginMethod public void openHome(PluginCall call) {
+        getActivity().runOnUiThread(() -> {
+            try {
+                getActivity().startActivity(new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME));
+                call.resolve();
+            } catch (Exception error) { call.reject("홈 화면을 열지 못했습니다.", error); }
+        });
+    }
+
+    public static void publishWidgetStatus() {
+        MedicineWidgetPlugin plugin = active.get();
+        if (plugin != null) plugin.notifyListeners("widgetStatusChanged", WidgetPinning.status(plugin.getContext()));
     }
 
     @PluginMethod public void exportData(PluginCall call) {
@@ -79,6 +101,7 @@ public class MedicineWidgetPlugin extends Plugin {
 
     @Override protected void handleOnResume() {
         publishState();
+        publishWidgetStatus();
         MedicineWidgetProvider.updateAll(getContext());
     }
 
