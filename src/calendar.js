@@ -10,7 +10,7 @@ export function monthDates(month) {
 export function calendarDay(state, date, now = new Date(), medicineId = '') {
   const medicines = state.medicines.filter(m => !medicineId || m.id === medicineId);
   const records = state.records.filter(r => r.date === date && (!medicineId || r.medicineId === medicineId));
-  const slots = scheduleFor(medicines, records, date);
+  const slots = scheduleFor(medicines, records, date).map(slot => slot.record ? { ...slot, name: slot.record.name, dose: slot.record.dose } : slot);
   // Recorded doses survive schedule edits and deletion; never count them twice.
   for (const record of records) {
     if (!slots.some(s => s.id === record.medicineId && s.time === record.time)) slots.push({ id: record.medicineId, name: record.name, dose: record.dose, time: record.time, key: record.id, record });

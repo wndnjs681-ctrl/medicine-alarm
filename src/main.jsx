@@ -6,6 +6,8 @@ import { isAndroidApp, loadWidgetState, saveWidgetState, subscribeWidgetState, r
 import AdherenceCalendar from './AdherenceCalendar.jsx';
 import NotificationSettings from './NotificationSettings.jsx';
 import { getNotificationStatus, requestNotificationPermission } from './native-widget.js';
+import RecordForm from './RecordForm.jsx';
+import { saveRecord } from './model.js';
 import './style.css';
 
 const formatDate = date => new Intl.DateTimeFormat('ko-KR', { month: 'long', day: 'numeric', weekday: 'long' }).format(new Date(`${date}T12:00:00`));
@@ -64,6 +66,7 @@ function App({ initial }) {
   const [date, setDate] = useState(dateKey());
   const [now, setNow] = useState(new Date());
   const [editing, setEditing] = useState(null);
+  const [recordEditing, setRecordEditing] = useState(null);
   const [deleting, setDeleting] = useState(null);
   const [settings, setSettings] = useState(false);
   const [nativeNotificationStatus, setNativeNotificationStatus] = useState(null);
@@ -181,6 +184,16 @@ function App({ initial }) {
     setEditing(null);
     setToast('약 정보를 저장했습니다.');
   }
+  function saveEditedRecord(draft, originalId) {
+    try {
+      const current = stateRef.current;
+      const records = saveRecord(current.records, draft, originalId);
+      setState({ ...current, records });
+      setRecordEditing(null);
+      setToast('복용 기록을 저장했습니다.');
+      return '';
+    } catch (error) { return error.message; }
+  }
   async function enableNotifications() {
     if (isAndroidApp) {
       try {
@@ -267,9 +280,10 @@ function App({ initial }) {
           <p className="bottom-note"><Pill size={15} />복용량과 복용 시간은 의사 또는 약사의 안내를 따라 주세요.</p>
         </>}
         {tab === 'medicines' && <section className="medicine-list">{!state.medicines.length ? <div className="empty-state"><span className="empty-icon"><ClipboardList size={32} /></span><h3>아직 등록한 약이 없어요</h3><button className="primary-button" onClick={() => setEditing({})}><Plus size={18} />약 등록</button></div> : state.medicines.map(m => <article className="medicine-row" key={m.id}><span className="medicine-symbol"><Pill size={24} /></span><div className="medicine-detail"><h2>{m.name}</h2><p>{m.dose}{m.note && ` · ${m.note}`}</p><div className="medicine-meta"><span><Clock3 size={14} />{m.times.join(', ')}</span><span>{m.cycle ? `${m.cycle.onDays}일 복용 · ${m.cycle.offDays}일 휴약` : m.days.length === 7 ? '매일' : [1, 2, 3, 4, 5, 6, 0].filter(d => m.days.includes(d)).map(d => WEEKDAYS[d]).join(' · ')}</span><span>{m.startDate} 시작</span></div></div><div className="row-actions"><button className="icon-button" title="수정" aria-label={`${m.name} 수정`} onClick={() => setEditing(m)}><Pencil size={18} /></button><button className="icon-button danger" title="삭제" aria-label={`${m.name} 삭제`} onClick={() => setDeleting(m)}><Trash2 size={18} /></button></div></article>)}</section>}
-        {tab === 'history' && <AdherenceCalendar state={state} now={now} disabled={!!initial.error} onExport={exportRecords} onToggle={(slot, selected) => setState(s => ({ ...s, records: toggleRecord(s.records, slot, selected) }))} />}
+        {tab === 'history' && <AdherenceCalendar state={state} now={now} disabled={!!initial.error} onExport={exportRecords} onEdit={setRecordEditing} onAdd={(selected, medicineId, slot) => setRecordEditing({ date: selected, medicineId: medicineId || slot?.id || '', time: slot?.time, dose: slot?.dose })} onToggle={(slot, selected) => setState(s => ({ ...s, records: toggleRecord(s.records, slot, selected) }))} />}
       </div>
     </main>
+    {recordEditing && <RecordForm Modal={Modal} state={state} initial={recordEditing} onSave={saveEditedRecord} onRemove={id => { setState(s => ({ ...s, records: s.records.filter(r => r.id !== id) })); setRecordEditing(null); setToast('복용 기록을 취소했습니다.'); }} onClose={() => setRecordEditing(null)} />}
     {editing && <MedicineForm medicine={editing.id ? editing : null} onSave={saveMedicine} onClose={() => setEditing(null)} />}
     {deleting && <Modal title="약 삭제" onClose={() => setDeleting(null)}><div className="modal-body"><p><strong>{deleting.name}</strong>을 목록에서 삭제할까요?</p><p className="muted">앞으로의 일정은 삭제되고, 이미 완료한 복용 기록은 남습니다.</p></div><div className="modal-footer"><button className="secondary-button" onClick={() => setDeleting(null)}>취소</button><button className="danger-button" onClick={() => { setState(s => ({ ...s, medicines: s.medicines.filter(m => m.id !== deleting.id) })); setDeleting(null); setToast('약을 삭제했습니다.'); }}><Trash2 size={17} />삭제</button></div></Modal>}
     {settings && <Modal title="설정" onClose={() => setSettings(false)}><div className="modal-body">{isAndroidApp && <div className="widget-setting"><div className="setting-row"><div><h3>홈 화면 위젯</h3><p className="muted">{widgetRegistrationLabel}</p></div><button className="secondary-button" disabled={!!initial.error || widgetAdding} onClick={addHomeWidget}><PanelsTopLeft size={17} />{widgetAdding ? '확인 중' : '위젯 추가'}</button></div><button className="text-button" onClick={() => openAndroidHome().catch(() => setToast('홈 화면을 열지 못했습니다.'))}><Home size={16} />홈 화면 열기</button></div>}{isAndroidApp ? <NotificationSettings enabled={state.notifications} onEnable={enableNotifications} onDisable={() => setState(s => ({ ...s, notifications: false }))} onStatus={setNativeNotificationStatus} onMessage={setToast} /> : <><div className="setting-row"><div><h3>브라우저 복용 알림</h3><p className="muted">{permission === 'denied' ? '브라우저 설정에서 알림 권한을 허용해 주세요.' : permission === 'unsupported' ? '이 브라우저는 알림을 지원하지 않습니다.' : '복용 시간에 알림을 받습니다.'}</p></div><button className={`toggle ${state.notifications && (isAndroidApp ? nativeNotificationStatus?.allowed : permission === 'granted') ? 'on' : ''}`} role="switch" aria-label="복용 알림" aria-checked={state.notifications && (isAndroidApp ? nativeNotificationStatus?.allowed : permission === 'granted')} onClick={() => state.notifications && (isAndroidApp ? nativeNotificationStatus?.allowed : permission === 'granted') ? setState(s => ({ ...s, notifications: false })) : enableNotifications()}><span /></button></div><p className="settings-notice">알림을 받으려면 이 페이지를 열어 두어야 합니다. 브라우저나 기기가 절전 상태이면 알림이 늦어질 수 있습니다.</p></>}<div className="setting-row"><div><h3>복용 데이터</h3><p className="muted">{isAndroidApp ? '이 앱에 저장되며 홈 화면 위젯과 공유됩니다. 앱을 삭제하면 기록도 삭제됩니다.' : '이 기기의 브라우저에만 저장됩니다. 브라우저 데이터를 삭제하면 기록도 삭제됩니다.'}</p></div></div><div className="data-actions"><button className="secondary-button" onClick={exportRecords}><Download size={16} />내보내기</button><button className="secondary-button" onClick={() => importInput.current.click()}><Upload size={16} />가져오기</button></div></div></Modal>}

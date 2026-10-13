@@ -57,6 +57,17 @@ export function toggleRecord(records, slot, date, now = new Date()) {
     : [...records, { id: slot.key, medicineId: slot.id, name: slot.name, dose: slot.dose, date, time: slot.time, takenAt: now.toISOString() }];
 }
 
+export function saveRecord(records, draft, originalId = null, now = new Date()) {
+  if (!draft || typeof draft.medicineId !== 'string' || !draft.medicineId || typeof draft.name !== 'string' || !draft.name.trim() || typeof draft.dose !== 'string' || !draft.dose.trim()) throw new Error('약과 복용 용량을 확인해 주세요.');
+  if (!isDateKey(draft.date) || draft.date > dateKey(now) || !/^([01]\d|2[0-3]):[0-5]\d$/.test(draft.time)) throw new Error('오늘까지의 날짜와 올바른 복용 시간을 선택해 주세요.');
+  const takenAt = new Date(draft.takenAt);
+  if (Number.isNaN(takenAt.getTime()) || takenAt > now) throw new Error('실제 복용 시각은 현재보다 이전으로 설정해 주세요.');
+  if (originalId && !records.some(r => r.id === originalId)) throw new Error('이 기록이 변경되었습니다. 최신 기록을 다시 선택해 주세요.');
+  const remaining = records.filter(r => r.id !== originalId);
+  if (remaining.some(r => r.medicineId === draft.medicineId && r.date === draft.date && r.time === draft.time)) throw new Error('같은 약·날짜·복용 시간의 기록이 이미 있습니다.');
+  return [...remaining, { id: slotKey(draft.medicineId, draft.date, draft.time), medicineId: draft.medicineId, name: draft.name.trim(), dose: draft.dose.trim(), date: draft.date, time: draft.time, takenAt: takenAt.toISOString() }];
+}
+
 export function parseState(raw) {
   if (!raw) return emptyState();
   const value = JSON.parse(raw);
